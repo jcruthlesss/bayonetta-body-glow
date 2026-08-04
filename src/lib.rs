@@ -58,7 +58,7 @@ unsafe fn visibility_set_int64_hook(
     value: i64,
 ) {
     if !boma.is_null()
-        && smash::app::utility::get_kind(boma) == *FIGHTER_KIND_BAYONETTA
+        && smash::app::utility::get_kind(&mut *boma) == *FIGHTER_KIND_BAYONETTA
         && WorkModule::get_int(boma, *FIGHTER_INSTANCE_WORK_ID_INT_COLOR) == TARGET_COLOR_SLOT
         && group == hash40("body") as i64
     {
