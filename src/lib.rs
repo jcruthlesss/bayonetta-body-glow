@@ -21,6 +21,7 @@ static mut ENDING_FRAMES: [i32; 8] = [0; 8];
 static mut OPENING_REQUESTED: [bool; 8] = [false; 8];
 static mut ENDING_REQUESTED: [bool; 8] = [false; 8];
 static mut ALLOW_BODY_NORMAL: [bool; 8] = [false; 8];
+static mut DIAGNOSTIC_SHOWN: [bool; 8] = [false; 8];
 
 unsafe fn entry_id(boma: *mut smash::app::BattleObjectModuleAccessor) -> Option<usize> {
     let id = WorkModule::get_int(boma, *FIGHTER_INSTANCE_WORK_ID_INT_ENTRY_ID);
@@ -126,6 +127,7 @@ unsafe fn reset_player(fighter: &mut L2CFighterCommon, id: usize) {
     OPENING_REQUESTED[id] = false;
     ENDING_REQUESTED[id] = false;
     ALLOW_BODY_NORMAL[id] = false;
+    DIAGNOSTIC_SHOWN[id] = false;
     clear_visuals(fighter);
 }
 
@@ -153,6 +155,14 @@ unsafe extern "C" fn bayonetta_body_glow_frame(fighter: &mut L2CFighterCommon) {
         {
             reset_player(fighter, id);
             return;
+        }
+
+        // Diagnostic build: show an unmistakable persistent aura as soon as
+        // c02 becomes playable. This proves the NRO and frame callback loaded
+        // independently of the body visibility transition detector.
+        if !DIAGNOSTIC_SHOWN[id] {
+            DIAGNOSTIC_SHOWN[id] = true;
+            ending_flash(fighter);
         }
 
         if OPENING_REQUESTED[id] {
