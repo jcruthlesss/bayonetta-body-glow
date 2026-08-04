@@ -6,7 +6,7 @@ use smash::lib::lua_const::*;
 use smash::lua2cpp::L2CFighterCommon;
 use smash::phx::Hash40;
 use smash_script::macros;
-use smashline::*;
+use smashline::{Agent, Main};
 
 // This build is intentionally restricted to Bayonetta costume slot c02.
 const TARGET_COLOR_SLOT: i32 = 2;
@@ -18,8 +18,11 @@ const END_HOLD_FRAMES: i32 = 8;
 // Per-player state. Ultimate supports up to eight fighter entry IDs.
 static mut WAS_BODY_ANIM: [bool; 8] = [false; 8];
 static mut ENDING_FRAMES: [i32; 8] = [0; 8];
+static mut OPENING_REQUESTED: [bool; 8] = [false; 8];
+static mut ENDING_REQUESTED: [bool; 8] = [false; 8];
+static mut ALLOW_BODY_NORMAL: [bool; 8] = [false; 8];
 
-unsafe fn entry_id(boma: &mut smash::app::BattleObjectModuleAccessor) -> Option<usize> {
+unsafe fn entry_id(boma: *mut smash::app::BattleObjectModuleAccessor) -> Option<usize> {
     let id = WorkModule::get_int(boma, *FIGHTER_INSTANCE_WORK_ID_INT_ENTRY_ID);
     if (0..8).contains(&id) {
         Some(id as usize)
@@ -28,7 +31,7 @@ unsafe fn entry_id(boma: &mut smash::app::BattleObjectModuleAccessor) -> Option<
     }
 }
 
-unsafe fn set_body_anim(boma: &mut smash::app::BattleObjectModuleAccessor) {
+unsafe fn set_body_anim(boma: *mut smash::app::BattleObjectModuleAccessor) {
     VisibilityModule::set_int64(
         boma,
         hash40("body") as i64,
@@ -36,19 +39,49 @@ unsafe fn set_body_anim(boma: &mut smash::app::BattleObjectModuleAccessor) {
     );
 }
 
-unsafe fn set_body_normal(boma: &mut smash::app::BattleObjectModuleAccessor) {
+unsafe fn set_body_normal(boma: *mut smash::app::BattleObjectModuleAccessor, id: usize) {
+    ALLOW_BODY_NORMAL[id] = true;
     VisibilityModule::set_int64(
         boma,
         hash40("body") as i64,
         hash40("body_normal") as i64,
     );
+    ALLOW_BODY_NORMAL[id] = false;
 }
 
-unsafe fn current_body_is_anim(
-    boma: &mut smash::app::BattleObjectModuleAccessor,
-) -> bool {
-    VisibilityModule::get_int64(boma, hash40("body") as i64)
-        == hash40("body_anim") as i64
+// VisibilityModule has no public getter. Observe the game's visibility writes
+// instead, and briefly defer its body_normal write while the ending flash runs.
+#[skyline::hook(replace = smash::app::lua_bind::VisibilityModule::set_int64)]
+unsafe fn visibility_set_int64_hook(
+    boma: *mut smash::app::BattleObjectModuleAccessor,
+    group: i64,
+    value: i64,
+) {
+    if !boma.is_null()
+        && smash::app::utility::get_kind(boma) == *FIGHTER_KIND_BAYONETTA
+        && WorkModule::get_int(boma, *FIGHTER_INSTANCE_WORK_ID_INT_COLOR) == TARGET_COLOR_SLOT
+        && group == hash40("body") as i64
+    {
+        if let Some(id) = entry_id(boma) {
+            if value == hash40("body_anim") as i64 {
+                if !WAS_BODY_ANIM[id] {
+                    OPENING_REQUESTED[id] = true;
+                }
+                WAS_BODY_ANIM[id] = true;
+            } else if value == hash40("body_normal") as i64
+                && WAS_BODY_ANIM[id]
+                && !ALLOW_BODY_NORMAL[id]
+            {
+                if ENDING_FRAMES[id] == 0 {
+                    ENDING_FRAMES[id] = END_HOLD_FRAMES;
+                    ENDING_REQUESTED[id] = true;
+                }
+                return;
+            }
+        }
+    }
+
+    original!()(boma, group, value);
 }
 
 unsafe fn clear_visuals(fighter: &mut L2CFighterCommon) {
@@ -90,11 +123,13 @@ unsafe fn ending_flash(fighter: &mut L2CFighterCommon) {
 unsafe fn reset_player(fighter: &mut L2CFighterCommon, id: usize) {
     WAS_BODY_ANIM[id] = false;
     ENDING_FRAMES[id] = 0;
+    OPENING_REQUESTED[id] = false;
+    ENDING_REQUESTED[id] = false;
+    ALLOW_BODY_NORMAL[id] = false;
     clear_visuals(fighter);
 }
 
-#[fighter_frame(agent = FIGHTER_KIND_BAYONETTA)]
-fn bayonetta_body_glow_frame(fighter: &mut L2CFighterCommon) {
+unsafe extern "C" fn bayonetta_body_glow_frame(fighter: &mut L2CFighterCommon) {
     unsafe {
         let boma = fighter.module_accessor;
         let Some(id) = entry_id(boma) else {
@@ -120,43 +155,37 @@ fn bayonetta_body_glow_frame(fighter: &mut L2CFighterCommon) {
             return;
         }
 
-        // While finishing, override any repeated body_normal request made by
-        // the game. This keeps the transformed mesh alive under the bloom.
+        if OPENING_REQUESTED[id] {
+            OPENING_REQUESTED[id] = false;
+            opening_flash(fighter);
+        }
+
+        if ENDING_REQUESTED[id] {
+            ENDING_REQUESTED[id] = false;
+            ending_flash(fighter);
+        }
+
+        // The hook suppresses repeated body_normal writes while this counts
+        // down, so changing to idle, walking, jumping, or taunting cannot cut
+        // the glow short.
         if ENDING_FRAMES[id] > 0 {
             set_body_anim(boma);
             ENDING_FRAMES[id] -= 1;
 
             if ENDING_FRAMES[id] == 0 {
-                set_body_normal(boma);
+                set_body_normal(boma, id);
                 clear_visuals(fighter);
                 WAS_BODY_ANIM[id] = false;
             }
             return;
         }
-
-        let is_anim = current_body_is_anim(boma);
-
-        // Rising edge: body_normal -> body_anim.
-        if is_anim && !WAS_BODY_ANIM[id] {
-            opening_flash(fighter);
-            WAS_BODY_ANIM[id] = true;
-            return;
-        }
-
-        // Falling edge: the game has requested body_normal. Restore body_anim
-        // for a few frames, cover it in bloom, then complete the switch.
-        if !is_anim && WAS_BODY_ANIM[id] {
-            set_body_anim(boma);
-            ENDING_FRAMES[id] = END_HOLD_FRAMES;
-            ending_flash(fighter);
-            return;
-        }
-
-        WAS_BODY_ANIM[id] = is_anim;
     }
 }
 
 #[skyline::main(name = "bayonetta_body_glow")]
 pub fn main() {
-    install_agent_frame_callbacks!(bayonetta_body_glow_frame);
+    skyline::install_hooks!(visibility_set_int64_hook);
+    Agent::new("bayonetta")
+        .on_line(Main, bayonetta_body_glow_frame)
+        .install();
 }
