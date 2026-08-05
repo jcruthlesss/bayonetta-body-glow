@@ -8,16 +8,20 @@ use smash_script::macros;
 use smashline::{Agent, Main};
 
 const TARGET_COLOR_SLOT: i32 = 2;
-// The diagnostic log placed the visible swap 78-96 frames after Bayonetta's
-// shooting state cleared. Start just before the earliest observed switch and
-// keep the bloom through the complete measured window.
-const POST_SHOOT_DELAY: i32 = 70;
-const END_GLOW_FRAMES: i32 = 26;
+// Calibrated from the automatic status exits in the diagnostic log rather
+// than the later manual shield markers. Each starts shortly before its model
+// transition; up smash receives a longer bloom.
+const SIDE_SMASH_DELAY: i32 = 40;
+const UP_SMASH_DELAY: i32 = 46;
+const DOWN_SMASH_DELAY: i32 = 32;
+const STANDARD_GLOW_FRAMES: i32 = 28;
+const UP_GLOW_FRAMES: i32 = 38;
 
 static mut SMASH_ACTIVE: [bool; 8] = [false; 8];
 static mut SAW_SHOOTING: [bool; 8] = [false; 8];
 static mut POST_SHOOT_TIMER: [i32; 8] = [-1; 8];
 static mut END_GLOW_TIMER: [i32; 8] = [0; 8];
+static mut ACTIVE_SMASH_STATUS: [i32; 8] = [0; 8];
 
 unsafe fn entry_id(boma: *mut smash::app::BattleObjectModuleAccessor) -> Option<usize> {
     let id = WorkModule::get_int(boma, *FIGHTER_INSTANCE_WORK_ID_INT_ENTRY_ID);
@@ -28,6 +32,24 @@ unsafe fn is_body_transform_smash_status(status: i32) -> bool {
     status == *FIGHTER_STATUS_KIND_ATTACK_S4
         || status == *FIGHTER_STATUS_KIND_ATTACK_HI4
         || status == *FIGHTER_STATUS_KIND_ATTACK_LW4
+}
+
+unsafe fn delay_for_status(status: i32) -> i32 {
+    if status == *FIGHTER_STATUS_KIND_ATTACK_HI4 {
+        UP_SMASH_DELAY
+    } else if status == *FIGHTER_STATUS_KIND_ATTACK_LW4 {
+        DOWN_SMASH_DELAY
+    } else {
+        SIDE_SMASH_DELAY
+    }
+}
+
+unsafe fn glow_frames_for_status(status: i32) -> i32 {
+    if status == *FIGHTER_STATUS_KIND_ATTACK_HI4 {
+        UP_GLOW_FRAMES
+    } else {
+        STANDARD_GLOW_FRAMES
+    }
 }
 
 unsafe fn shooting_state_active(boma: *mut smash::app::BattleObjectModuleAccessor) -> bool {
@@ -82,6 +104,7 @@ unsafe fn reset(fighter: &mut L2CFighterCommon, id: usize) {
     SAW_SHOOTING[id] = false;
     POST_SHOOT_TIMER[id] = -1;
     END_GLOW_TIMER[id] = 0;
+    ACTIVE_SMASH_STATUS[id] = 0;
     kill_glow(fighter);
 }
 
@@ -115,6 +138,7 @@ unsafe extern "C" fn bayonetta_body_glow_frame(fighter: &mut L2CFighterCommon) {
             SAW_SHOOTING[id] = false;
             POST_SHOOT_TIMER[id] = -1;
             END_GLOW_TIMER[id] = 0;
+            ACTIVE_SMASH_STATUS[id] = status;
         }
 
         if SMASH_ACTIVE[id] {
@@ -122,17 +146,17 @@ unsafe extern "C" fn bayonetta_body_glow_frame(fighter: &mut L2CFighterCommon) {
                 SAW_SHOOTING[id] = true;
             } else if SAW_SHOOTING[id] && POST_SHOOT_TIMER[id] < 0 {
                 // This is the repeatable falling edge seen in every logged run.
-                POST_SHOOT_TIMER[id] = POST_SHOOT_DELAY;
+                POST_SHOOT_TIMER[id] = delay_for_status(ACTIVE_SMASH_STATUS[id]);
             } else if !in_smash && POST_SHOOT_TIMER[id] < 0 {
                 // Fallback for an unusually early cancel before gun state starts.
-                POST_SHOOT_TIMER[id] = POST_SHOOT_DELAY;
+                POST_SHOOT_TIMER[id] = delay_for_status(ACTIVE_SMASH_STATUS[id]);
             }
         }
 
         if POST_SHOOT_TIMER[id] >= 0 {
             if POST_SHOOT_TIMER[id] == 0 {
                 ending_glow(fighter);
-                END_GLOW_TIMER[id] = END_GLOW_FRAMES;
+                END_GLOW_TIMER[id] = glow_frames_for_status(ACTIVE_SMASH_STATUS[id]);
                 POST_SHOOT_TIMER[id] = -1;
                 SMASH_ACTIVE[id] = false;
                 SAW_SHOOTING[id] = false;
