@@ -3,102 +3,156 @@
 use smash::app::lua_bind::*;
 use smash::lib::lua_const::*;
 use smash::lua2cpp::L2CFighterCommon;
+use smash::phx::Hash40;
+use smash_script::macros;
 use smashline::{Agent, Main};
-use std::fs::{File, OpenOptions};
-use std::io::Write;
 
 const TARGET_COLOR_SLOT: i32 = 2;
-const LOG_PATH: &str = "sd:/ultimate/bayonetta_body_debug.txt";
+// The diagnostic log placed the visible swap 78-96 frames after Bayonetta's
+// shooting state cleared. Start just before the earliest observed switch and
+// keep the bloom through the complete measured window.
+const POST_SHOOT_DELAY: i32 = 70;
+const END_GLOW_FRAMES: i32 = 26;
 
-static mut LOG_FILE: Option<File> = None;
-static mut FRAME_COUNTER: [u64; 8] = [0; 8];
-static mut WAS_GUARD_ON: [bool; 8] = [false; 8];
+static mut SMASH_ACTIVE: [bool; 8] = [false; 8];
+static mut SAW_SHOOTING: [bool; 8] = [false; 8];
+static mut POST_SHOOT_TIMER: [i32; 8] = [-1; 8];
+static mut END_GLOW_TIMER: [i32; 8] = [0; 8];
 
 unsafe fn entry_id(boma: *mut smash::app::BattleObjectModuleAccessor) -> Option<usize> {
     let id = WorkModule::get_int(boma, *FIGHTER_INSTANCE_WORK_ID_INT_ENTRY_ID);
     if (0..8).contains(&id) { Some(id as usize) } else { None }
 }
 
-unsafe fn log_line(line: &str, flush: bool) {
-    if let Some(file) = LOG_FILE.as_mut() {
-        let _ = writeln!(file, "{}", line);
-        if flush {
-            let _ = file.flush();
-        }
-    }
+unsafe fn is_body_transform_smash_status(status: i32) -> bool {
+    status == *FIGHTER_STATUS_KIND_ATTACK_S4
+        || status == *FIGHTER_STATUS_KIND_ATTACK_HI4
+        || status == *FIGHTER_STATUS_KIND_ATTACK_LW4
 }
 
-unsafe extern "C" fn bayonetta_debug_frame(fighter: &mut L2CFighterCommon) {
+unsafe fn shooting_state_active(boma: *mut smash::app::BattleObjectModuleAccessor) -> bool {
+    let step = WorkModule::get_int(
+        boma,
+        *FIGHTER_BAYONETTA_INSTANCE_WORK_ID_INT_SHOOTING_STEP,
+    );
+    WorkModule::is_flag(
+        boma,
+        *FIGHTER_BAYONETTA_INSTANCE_WORK_ID_FLAG_SHOOTING_ACTION,
+    ) || WorkModule::is_flag(
+        boma,
+        *FIGHTER_BAYONETTA_INSTANCE_WORK_ID_FLAG_SHOOTING_CHECK_END,
+    ) || WorkModule::is_flag(
+        boma,
+        *FIGHTER_BAYONETTA_INSTANCE_WORK_ID_FLAG_SHOOTING_MOTION_STOP,
+    ) || step != *FIGHTER_BAYONETTA_SHOOTING_STEP_WAIT
+}
+
+unsafe fn kill_glow(fighter: &mut L2CFighterCommon) {
+    macros::COL_NORMAL(fighter);
+    EffectModule::kill_kind(
+        fighter.module_accessor,
+        Hash40::new("sys_aura_light"),
+        true,
+        true,
+    );
+}
+
+unsafe fn aura_at(fighter: &mut L2CFighterCommon, y: f32, scale: f32) {
+    macros::EFFECT_FOLLOW(
+        fighter,
+        Hash40::new("sys_aura_light"),
+        Hash40::new("top"),
+        0.0, y, 0.0,
+        0.0, 0.0, 0.0,
+        scale,
+        true,
+    );
+    macros::LAST_EFFECT_SET_COLOR(fighter, 1.0, 0.82, 1.0);
+}
+
+unsafe fn ending_glow(fighter: &mut L2CFighterCommon) {
+    macros::FLASH(fighter, 16.0, 16.0, 20.0, 1.0);
+    aura_at(fighter, 3.0, 2.7);
+    aura_at(fighter, 7.5, 3.1);
+    aura_at(fighter, 12.0, 2.7);
+}
+
+unsafe fn reset(fighter: &mut L2CFighterCommon, id: usize) {
+    SMASH_ACTIVE[id] = false;
+    SAW_SHOOTING[id] = false;
+    POST_SHOOT_TIMER[id] = -1;
+    END_GLOW_TIMER[id] = 0;
+    kill_glow(fighter);
+}
+
+unsafe extern "C" fn bayonetta_body_glow_frame(fighter: &mut L2CFighterCommon) {
     unsafe {
         let boma = fighter.module_accessor;
         let Some(id) = entry_id(boma) else { return; };
+
         if WorkModule::get_int(boma, *FIGHTER_INSTANCE_WORK_ID_INT_COLOR) != TARGET_COLOR_SLOT {
+            if SMASH_ACTIVE[id] || POST_SHOOT_TIMER[id] >= 0 || END_GLOW_TIMER[id] > 0 {
+                reset(fighter, id);
+            }
             return;
         }
 
-        FRAME_COUNTER[id] += 1;
-        let frame_id = FRAME_COUNTER[id];
         let status = StatusModule::status_kind(boma);
-        let motion = MotionModule::motion_kind(boma);
-        let motion_frame = MotionModule::frame(boma);
-        let motion_end = MotionModule::end_frame(boma);
-        let motion_changing = MotionModule::is_changing(boma);
-        let shooting_action = WorkModule::is_flag(
-            boma,
-            *FIGHTER_BAYONETTA_INSTANCE_WORK_ID_FLAG_SHOOTING_ACTION,
-        );
-        let shooting_keep = WorkModule::is_flag(
-            boma,
-            *FIGHTER_BAYONETTA_INSTANCE_WORK_ID_FLAG_SHOOTING_KEEP,
-        );
-        let shooting_check_end = WorkModule::is_flag(
-            boma,
-            *FIGHTER_BAYONETTA_INSTANCE_WORK_ID_FLAG_SHOOTING_CHECK_END,
-        );
-        let shooting_motion_stop = WorkModule::is_flag(
-            boma,
-            *FIGHTER_BAYONETTA_INSTANCE_WORK_ID_FLAG_SHOOTING_MOTION_STOP,
-        );
-        let shooting_step = WorkModule::get_int(
-            boma,
-            *FIGHTER_BAYONETTA_INSTANCE_WORK_ID_INT_SHOOTING_STEP,
-        );
-        let shooting_frame = WorkModule::get_int(
-            boma,
-            *FIGHTER_BAYONETTA_INSTANCE_WORK_ID_INT_SHOOTING_FRAME,
-        );
-        let guard_on = ControlModule::check_button_on(boma, *CONTROL_PAD_BUTTON_GUARD);
-        let guard_marker = guard_on && !WAS_GUARD_ON[id];
-        WAS_GUARD_ON[id] = guard_on;
+        if status == *FIGHTER_STATUS_KIND_ENTRY
+            || status == *FIGHTER_STATUS_KIND_REBIRTH
+            || status == *FIGHTER_STATUS_KIND_DEAD
+        {
+            reset(fighter, id);
+            return;
+        }
 
-        let line = format!(
-            "f={frame_id} entry={id} status={status} motion=0x{motion:016x} motion_frame={motion_frame:.2} motion_end={motion_end:.2} changing={} shoot_action={} shoot_keep={} shoot_check_end={} shoot_stop={} shoot_step={} shoot_frame={} marker_guard={}",
-            motion_changing as u8,
-            shooting_action as u8,
-            shooting_keep as u8,
-            shooting_check_end as u8,
-            shooting_motion_stop as u8,
-            shooting_step,
-            shooting_frame,
-            guard_marker as u8,
-        );
-        log_line(&line, guard_marker || frame_id % 60 == 0);
+        let in_smash = is_body_transform_smash_status(status);
+        let shooting = shooting_state_active(boma);
+
+        if in_smash && !SMASH_ACTIVE[id] {
+            kill_glow(fighter);
+            SMASH_ACTIVE[id] = true;
+            SAW_SHOOTING[id] = false;
+            POST_SHOOT_TIMER[id] = -1;
+            END_GLOW_TIMER[id] = 0;
+        }
+
+        if SMASH_ACTIVE[id] {
+            if shooting {
+                SAW_SHOOTING[id] = true;
+            } else if SAW_SHOOTING[id] && POST_SHOOT_TIMER[id] < 0 {
+                // This is the repeatable falling edge seen in every logged run.
+                POST_SHOOT_TIMER[id] = POST_SHOOT_DELAY;
+            } else if !in_smash && POST_SHOOT_TIMER[id] < 0 {
+                // Fallback for an unusually early cancel before gun state starts.
+                POST_SHOOT_TIMER[id] = POST_SHOOT_DELAY;
+            }
+        }
+
+        if POST_SHOOT_TIMER[id] >= 0 {
+            if POST_SHOOT_TIMER[id] == 0 {
+                ending_glow(fighter);
+                END_GLOW_TIMER[id] = END_GLOW_FRAMES;
+                POST_SHOOT_TIMER[id] = -1;
+                SMASH_ACTIVE[id] = false;
+                SAW_SHOOTING[id] = false;
+            } else {
+                POST_SHOOT_TIMER[id] -= 1;
+            }
+        }
+
+        if END_GLOW_TIMER[id] > 0 {
+            END_GLOW_TIMER[id] -= 1;
+            if END_GLOW_TIMER[id] == 0 {
+                kill_glow(fighter);
+            }
+        }
     }
 }
 
-#[skyline::main(name = "bayonetta_body_glow_debug")]
+#[skyline::main(name = "bayonetta_body_glow")]
 pub fn main() {
-    unsafe {
-        LOG_FILE = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(LOG_PATH)
-            .ok();
-        log_line("bayonetta body transition diagnostic v1", true);
-    }
-
     Agent::new("bayonetta")
-        .on_line(Main, bayonetta_debug_frame)
+        .on_line(Main, bayonetta_body_glow_frame)
         .install();
 }
