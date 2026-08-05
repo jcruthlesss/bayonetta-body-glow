@@ -11,12 +11,10 @@ use smashline::{Agent, Main};
 const TARGET_COLOR_SLOT: i32 = 2;
 // Runtime state survives motion cancels. This is the first calibration value;
 // it can be adjusted after an in-game timing test.
-const TRANSFORM_FRAMES: i32 = 30;
-const OPEN_GLOW_FRAMES: i32 = 8;
+const TRANSFORM_FRAMES: i32 = 90;
 const END_GLOW_FRAMES: i32 = 12;
 
 static mut TRANSFORM_TIMER: [i32; 8] = [0; 8];
-static mut OPEN_TIMER: [i32; 8] = [0; 8];
 static mut WAS_TRIGGER_MOTION: [bool; 8] = [false; 8];
 static mut END_GLOW_STARTED: [bool; 8] = [false; 8];
 
@@ -57,15 +55,6 @@ unsafe fn aura_at(fighter: &mut L2CFighterCommon, y: f32, scale: f32) {
     macros::LAST_EFFECT_SET_COLOR(fighter, 1.0, 0.82, 1.0);
 }
 
-unsafe fn opening_glow(fighter: &mut L2CFighterCommon) {
-    // Immediate bright start with a short fade back to normal.
-    macros::FLASH(fighter, 12.0, 12.0, 16.0, 1.0);
-    macros::FLASH_FRM(fighter, OPEN_GLOW_FRAMES, 1.0, 1.0, 1.0, 0.0);
-    aura_at(fighter, 3.5, 2.2);
-    aura_at(fighter, 7.5, 2.6);
-    aura_at(fighter, 11.0, 2.2);
-}
-
 unsafe fn ending_glow(fighter: &mut L2CFighterCommon) {
     // Three overlapping body lights create the body-covering bloom requested.
     macros::FLASH(fighter, 16.0, 16.0, 20.0, 1.0);
@@ -76,7 +65,6 @@ unsafe fn ending_glow(fighter: &mut L2CFighterCommon) {
 
 unsafe fn reset(fighter: &mut L2CFighterCommon, id: usize) {
     TRANSFORM_TIMER[id] = 0;
-    OPEN_TIMER[id] = 0;
     WAS_TRIGGER_MOTION[id] = false;
     END_GLOW_STARTED[id] = false;
     kill_glow(fighter);
@@ -88,7 +76,7 @@ unsafe extern "C" fn bayonetta_body_glow_frame(fighter: &mut L2CFighterCommon) {
         let Some(id) = entry_id(boma) else { return; };
 
         if WorkModule::get_int(boma, *FIGHTER_INSTANCE_WORK_ID_INT_COLOR) != TARGET_COLOR_SLOT {
-            if TRANSFORM_TIMER[id] > 0 || OPEN_TIMER[id] > 0 {
+            if TRANSFORM_TIMER[id] > 0 {
                 reset(fighter, id);
             }
             return;
@@ -107,18 +95,9 @@ unsafe extern "C" fn bayonetta_body_glow_frame(fighter: &mut L2CFighterCommon) {
         if trigger && !WAS_TRIGGER_MOTION[id] {
             kill_glow(fighter);
             TRANSFORM_TIMER[id] = TRANSFORM_FRAMES;
-            OPEN_TIMER[id] = OPEN_GLOW_FRAMES;
             END_GLOW_STARTED[id] = false;
-            opening_glow(fighter);
         }
         WAS_TRIGGER_MOTION[id] = trigger;
-
-        if OPEN_TIMER[id] > 0 {
-            OPEN_TIMER[id] -= 1;
-            if OPEN_TIMER[id] == 0 {
-                kill_glow(fighter);
-            }
-        }
 
         if TRANSFORM_TIMER[id] > 0 {
             if TRANSFORM_TIMER[id] == END_GLOW_FRAMES && !END_GLOW_STARTED[id] {
