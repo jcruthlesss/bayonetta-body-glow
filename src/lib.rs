@@ -14,13 +14,15 @@ const TARGET_COLOR_SLOT: i32 = 2;
 const SIDE_SMASH_DELAY: i32 = 40;
 const UP_SMASH_DELAY: i32 = 46;
 const DOWN_SMASH_DELAY: i32 = 32;
-const STANDARD_GLOW_FRAMES: i32 = 28;
-const UP_GLOW_FRAMES: i32 = 38;
+const STANDARD_GLOW_FRAMES: i32 = 8;
+const UP_GLOW_FRAMES: i32 = 10;
+const CLEANUP_FRAMES: i32 = 6;
 
 static mut SMASH_ACTIVE: [bool; 8] = [false; 8];
 static mut SAW_SHOOTING: [bool; 8] = [false; 8];
 static mut POST_SHOOT_TIMER: [i32; 8] = [-1; 8];
 static mut END_GLOW_TIMER: [i32; 8] = [0; 8];
+static mut CLEANUP_TIMER: [i32; 8] = [0; 8];
 static mut ACTIVE_SMASH_STATUS: [i32; 8] = [0; 8];
 
 unsafe fn entry_id(boma: *mut smash::app::BattleObjectModuleAccessor) -> Option<usize> {
@@ -104,6 +106,7 @@ unsafe fn reset(fighter: &mut L2CFighterCommon, id: usize) {
     SAW_SHOOTING[id] = false;
     POST_SHOOT_TIMER[id] = -1;
     END_GLOW_TIMER[id] = 0;
+    CLEANUP_TIMER[id] = 0;
     ACTIVE_SMASH_STATUS[id] = 0;
     kill_glow(fighter);
 }
@@ -138,6 +141,7 @@ unsafe extern "C" fn bayonetta_body_glow_frame(fighter: &mut L2CFighterCommon) {
             SAW_SHOOTING[id] = false;
             POST_SHOOT_TIMER[id] = -1;
             END_GLOW_TIMER[id] = 0;
+            CLEANUP_TIMER[id] = 0;
             ACTIVE_SMASH_STATUS[id] = status;
         }
 
@@ -169,7 +173,16 @@ unsafe extern "C" fn bayonetta_body_glow_frame(fighter: &mut L2CFighterCommon) {
             END_GLOW_TIMER[id] -= 1;
             if END_GLOW_TIMER[id] == 0 {
                 kill_glow(fighter);
+                CLEANUP_TIMER[id] = CLEANUP_FRAMES;
             }
+        }
+
+        // Some effect instances can finish their current particle update after
+        // the first kill request. Repeat cleanup briefly to prevent any aura
+        // from lingering on body_norm.
+        if CLEANUP_TIMER[id] > 0 {
+            kill_glow(fighter);
+            CLEANUP_TIMER[id] -= 1;
         }
     }
 }
