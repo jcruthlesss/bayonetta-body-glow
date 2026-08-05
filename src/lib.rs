@@ -26,6 +26,7 @@ static mut POST_SHOOT_TIMER: [i32; 8] = [-1; 8];
 static mut END_GLOW_TIMER: [i32; 8] = [0; 8];
 static mut CLEANUP_TIMER: [i32; 8] = [0; 8];
 static mut ACTIVE_SMASH_STATUS: [i32; 8] = [0; 8];
+static mut WAS_IN_SMASH: [bool; 8] = [false; 8];
 
 unsafe fn entry_id(boma: *mut smash::app::BattleObjectModuleAccessor) -> Option<usize> {
     let id = WorkModule::get_int(boma, *FIGHTER_INSTANCE_WORK_ID_INT_ENTRY_ID);
@@ -110,6 +111,7 @@ unsafe fn reset(fighter: &mut L2CFighterCommon, id: usize) {
     END_GLOW_TIMER[id] = 0;
     CLEANUP_TIMER[id] = 0;
     ACTIVE_SMASH_STATUS[id] = 0;
+    WAS_IN_SMASH[id] = false;
     kill_glow(fighter);
 }
 
@@ -137,7 +139,11 @@ unsafe extern "C" fn bayonetta_body_glow_frame(fighter: &mut L2CFighterCommon) {
         let in_smash = is_body_transform_smash_status(status);
         let shooting = shooting_state_active(boma);
 
-        if in_smash && !SMASH_ACTIVE[id] {
+        // Arm only on entry into a smash status. After the glow fires,
+        // SMASH_ACTIVE becomes false while the original smash status may still
+        // be running; using SMASH_ACTIVE here would rearm the same attack and
+        // create a second delayed flash.
+        if in_smash && !WAS_IN_SMASH[id] {
             kill_glow(fighter);
             SMASH_ACTIVE[id] = true;
             SAW_SHOOTING[id] = false;
@@ -186,6 +192,8 @@ unsafe extern "C" fn bayonetta_body_glow_frame(fighter: &mut L2CFighterCommon) {
             kill_glow(fighter);
             CLEANUP_TIMER[id] -= 1;
         }
+
+        WAS_IN_SMASH[id] = in_smash;
     }
 }
 
