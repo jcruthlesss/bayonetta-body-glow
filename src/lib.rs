@@ -75,16 +75,16 @@ unsafe fn kill_glow(fighter: &mut L2CFighterCommon) {
     macros::COL_NORMAL(fighter);
     EffectModule::kill_kind(
         fighter.module_accessor,
-        Hash40::new("sys_aura_light"),
+        Hash40::new("sys_flash"),
         true,
         true,
     );
 }
 
-unsafe fn aura_at(fighter: &mut L2CFighterCommon, y: f32, scale: f32) {
+unsafe fn flash_at(fighter: &mut L2CFighterCommon, y: f32, scale: f32) {
     macros::EFFECT_FOLLOW(
         fighter,
-        Hash40::new("sys_aura_light"),
+        Hash40::new("sys_flash"),
         Hash40::new("top"),
         0.0, y, 0.0,
         0.0, 0.0, 0.0,
@@ -96,9 +96,12 @@ unsafe fn aura_at(fighter: &mut L2CFighterCommon, y: f32, scale: f32) {
 
 unsafe fn ending_glow(fighter: &mut L2CFighterCommon) {
     macros::FLASH(fighter, 16.0, 16.0, 20.0, 1.0);
-    aura_at(fighter, 3.0, 2.7);
-    aura_at(fighter, 7.5, 3.1);
-    aura_at(fighter, 12.0, 2.7);
+    // sys_aura_light keeps emitting after kill_kind and visibly survives the
+    // body_anim -> body_norm swap. sys_flash is a one-shot bloom, so these
+    // three overlapping bursts cover the body without leaving attached wings.
+    flash_at(fighter, 3.0, 2.7);
+    flash_at(fighter, 7.5, 3.1);
+    flash_at(fighter, 12.0, 2.7);
 }
 
 unsafe fn reset(fighter: &mut L2CFighterCommon, id: usize) {
@@ -177,9 +180,7 @@ unsafe extern "C" fn bayonetta_body_glow_frame(fighter: &mut L2CFighterCommon) {
             }
         }
 
-        // Some effect instances can finish their current particle update after
-        // the first kill request. Repeat cleanup briefly to prevent any aura
-        // from lingering on body_norm.
+        // Repeat cleanup briefly so no one-shot instance crosses onto body_norm.
         if CLEANUP_TIMER[id] > 0 {
             kill_glow(fighter);
             CLEANUP_TIMER[id] -= 1;
