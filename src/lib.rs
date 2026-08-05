@@ -138,16 +138,6 @@ unsafe extern "C" fn bayonetta_body_glow_frame(fighter: &mut L2CFighterCommon) {
             return;
         };
 
-        // Do nothing to every other costume slot.
-        if WorkModule::get_int(boma, *FIGHTER_INSTANCE_WORK_ID_INT_COLOR)
-            != TARGET_COLOR_SLOT
-        {
-            if WAS_BODY_ANIM[id] || ENDING_FRAMES[id] > 0 {
-                reset_player(fighter, id);
-            }
-            return;
-        }
-
         let status = StatusModule::status_kind(boma);
         if status == *FIGHTER_STATUS_KIND_ENTRY
             || status == *FIGHTER_STATUS_KIND_REBIRTH
@@ -156,6 +146,12 @@ unsafe extern "C" fn bayonetta_body_glow_frame(fighter: &mut L2CFighterCommon) {
             reset_player(fighter, id);
             return;
         }
+
+        // Callback diagnostic: intentionally affect every Bayonetta costume
+        // and force body_anim each frame. If this callback is executing, the
+        // model cannot settle on body_normal even if FLASH is unsupported here.
+        set_body_anim(boma);
+        macros::FLASH(fighter, 16.0, 16.0, 20.0, 1.0);
 
         // Diagnostic build: show an unmistakable persistent aura as soon as
         // c02 becomes playable. This proves the NRO and frame callback loaded
