@@ -12,7 +12,6 @@ const TARGET_COLOR_SLOT: i32 = 2;
 const END_GLOW_FRAMES: i32 = 12;
 
 static mut TRANSFORM_ACTIVE: [bool; 8] = [false; 8];
-static mut LEFT_TRANSFORM_MOTION: [bool; 8] = [false; 8];
 static mut END_GLOW_TIMER: [i32; 8] = [0; 8];
 
 unsafe fn entry_id(boma: *mut smash::app::BattleObjectModuleAccessor) -> Option<usize> {
@@ -27,6 +26,20 @@ unsafe fn is_transform_motion(boma: *mut smash::app::BattleObjectModuleAccessor)
         || motion == hash40("attack_s4_lw")
         || motion == hash40("attack_hi4")
         || motion == hash40("attack_lw4")
+}
+
+unsafe fn shooting_state_active(boma: *mut smash::app::BattleObjectModuleAccessor) -> bool {
+    let step = WorkModule::get_int(
+        boma,
+        *FIGHTER_BAYONETTA_INSTANCE_WORK_ID_INT_SHOOTING_STEP,
+    );
+    WorkModule::is_flag(
+        boma,
+        *FIGHTER_BAYONETTA_INSTANCE_WORK_ID_FLAG_SHOOTING_ACTION,
+    ) || WorkModule::is_flag(
+        boma,
+        *FIGHTER_BAYONETTA_INSTANCE_WORK_ID_FLAG_SHOOTING_KEEP,
+    ) || step != *FIGHTER_BAYONETTA_SHOOTING_STEP_WAIT
 }
 
 unsafe fn kill_glow(fighter: &mut L2CFighterCommon) {
@@ -61,7 +74,6 @@ unsafe fn ending_glow(fighter: &mut L2CFighterCommon) {
 
 unsafe fn reset(fighter: &mut L2CFighterCommon, id: usize) {
     TRANSFORM_ACTIVE[id] = false;
-    LEFT_TRANSFORM_MOTION[id] = false;
     END_GLOW_TIMER[id] = 0;
     kill_glow(fighter);
 }
@@ -89,23 +101,14 @@ unsafe extern "C" fn bayonetta_body_glow_frame(fighter: &mut L2CFighterCommon) {
 
         let transform_motion = is_transform_motion(boma);
         if transform_motion {
-            // Gun holds remain inside the transform motion, so no countdown or
-            // estimated duration is needed.
             TRANSFORM_ACTIVE[id] = true;
-            LEFT_TRANSFORM_MOTION[id] = false;
-        } else if TRANSFORM_ACTIVE[id] {
-            LEFT_TRANSFORM_MOTION[id] = true;
-
-            // Cancels and normal completions both blend into another motion.
-            // The body model persists through that blend; trigger when the
-            // actual motion transition reports that it has finished.
-            if !MotionModule::is_changing(boma) {
-                kill_glow(fighter);
-                ending_glow(fighter);
-                END_GLOW_TIMER[id] = END_GLOW_FRAMES;
-                TRANSFORM_ACTIVE[id] = false;
-                LEFT_TRANSFORM_MOTION[id] = false;
-            }
+        } else if TRANSFORM_ACTIVE[id] && !shooting_state_active(boma) {
+            // Bayonetta's shooting state is preserved while gunfire is held
+            // and cleared by the game when the post-smash model state ends.
+            kill_glow(fighter);
+            ending_glow(fighter);
+            END_GLOW_TIMER[id] = END_GLOW_FRAMES;
+            TRANSFORM_ACTIVE[id] = false;
         }
 
         if END_GLOW_TIMER[id] > 0 {
