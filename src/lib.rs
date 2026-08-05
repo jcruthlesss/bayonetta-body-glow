@@ -1,6 +1,7 @@
 #![feature(proc_macro_hygiene)]
 
 use smash::app::lua_bind::*;
+use smash::hash40;
 use smash::lib::lua_const::*;
 use smash::lua2cpp::L2CFighterCommon;
 use smash::phx::Hash40;
@@ -8,11 +9,10 @@ use smash_script::macros;
 use smashline::{Agent, Main};
 
 const TARGET_COLOR_SLOT: i32 = 2;
-// body_anim is the first mesh entry in c02's model.numdlb.
-const BODY_ANIM_MESH_INDEX: u32 = 0;
 const END_GLOW_FRAMES: i32 = 12;
 
-static mut WAS_BODY_ANIM_VISIBLE: [bool; 8] = [false; 8];
+static mut TRANSFORM_ACTIVE: [bool; 8] = [false; 8];
+static mut LEFT_TRANSFORM_MOTION: [bool; 8] = [false; 8];
 static mut END_GLOW_TIMER: [i32; 8] = [0; 8];
 
 unsafe fn entry_id(boma: *mut smash::app::BattleObjectModuleAccessor) -> Option<usize> {
@@ -20,8 +20,13 @@ unsafe fn entry_id(boma: *mut smash::app::BattleObjectModuleAccessor) -> Option<
     if (0..8).contains(&id) { Some(id as usize) } else { None }
 }
 
-unsafe fn body_anim_is_visible(boma: *mut smash::app::BattleObjectModuleAccessor) -> bool {
-    VisibilityModule::is_visible_mesh(boma, BODY_ANIM_MESH_INDEX)
+unsafe fn is_transform_motion(boma: *mut smash::app::BattleObjectModuleAccessor) -> bool {
+    let motion = MotionModule::motion_kind(boma);
+    motion == hash40("attack_s4_s")
+        || motion == hash40("attack_s4_hi")
+        || motion == hash40("attack_s4_lw")
+        || motion == hash40("attack_hi4")
+        || motion == hash40("attack_lw4")
 }
 
 unsafe fn kill_glow(fighter: &mut L2CFighterCommon) {
@@ -55,7 +60,8 @@ unsafe fn ending_glow(fighter: &mut L2CFighterCommon) {
 }
 
 unsafe fn reset(fighter: &mut L2CFighterCommon, id: usize) {
-    WAS_BODY_ANIM_VISIBLE[id] = false;
+    TRANSFORM_ACTIVE[id] = false;
+    LEFT_TRANSFORM_MOTION[id] = false;
     END_GLOW_TIMER[id] = 0;
     kill_glow(fighter);
 }
@@ -66,7 +72,7 @@ unsafe extern "C" fn bayonetta_body_glow_frame(fighter: &mut L2CFighterCommon) {
         let Some(id) = entry_id(boma) else { return; };
 
         if WorkModule::get_int(boma, *FIGHTER_INSTANCE_WORK_ID_INT_COLOR) != TARGET_COLOR_SLOT {
-            if WAS_BODY_ANIM_VISIBLE[id] || END_GLOW_TIMER[id] > 0 {
+            if TRANSFORM_ACTIVE[id] || END_GLOW_TIMER[id] > 0 {
                 reset(fighter, id);
             }
             return;
@@ -81,16 +87,26 @@ unsafe extern "C" fn bayonetta_body_glow_frame(fighter: &mut L2CFighterCommon) {
             return;
         }
 
-        let visible_now = body_anim_is_visible(boma);
+        let transform_motion = is_transform_motion(boma);
+        if transform_motion {
+            // Gun holds remain inside the transform motion, so no countdown or
+            // estimated duration is needed.
+            TRANSFORM_ACTIVE[id] = true;
+            LEFT_TRANSFORM_MOTION[id] = false;
+        } else if TRANSFORM_ACTIVE[id] {
+            LEFT_TRANSFORM_MOTION[id] = true;
 
-        // Actual model-state edge: body_anim visible -> body_anim hidden.
-        // Gun hold length, motion changes, and cancels cannot affect detection.
-        if !visible_now && WAS_BODY_ANIM_VISIBLE[id] {
-            kill_glow(fighter);
-            ending_glow(fighter);
-            END_GLOW_TIMER[id] = END_GLOW_FRAMES;
+            // Cancels and normal completions both blend into another motion.
+            // The body model persists through that blend; trigger when the
+            // actual motion transition reports that it has finished.
+            if !MotionModule::is_changing(boma) {
+                kill_glow(fighter);
+                ending_glow(fighter);
+                END_GLOW_TIMER[id] = END_GLOW_FRAMES;
+                TRANSFORM_ACTIVE[id] = false;
+                LEFT_TRANSFORM_MOTION[id] = false;
+            }
         }
-        WAS_BODY_ANIM_VISIBLE[id] = visible_now;
 
         if END_GLOW_TIMER[id] > 0 {
             END_GLOW_TIMER[id] -= 1;
