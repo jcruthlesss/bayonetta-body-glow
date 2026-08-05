@@ -11,8 +11,8 @@ use smashline::{Agent, Main};
 const TARGET_COLOR_SLOT: i32 = 2;
 // Runtime state survives motion cancels. This is the first calibration value;
 // it can be adjusted after an in-game timing test.
-const TRANSFORM_FRAMES: i32 = 150;
-const OPEN_GLOW_FRAMES: i32 = 5;
+const TRANSFORM_FRAMES: i32 = 30;
+const OPEN_GLOW_FRAMES: i32 = 8;
 const END_GLOW_FRAMES: i32 = 12;
 
 static mut TRANSFORM_TIMER: [i32; 8] = [0; 8];
@@ -59,11 +59,11 @@ unsafe fn aura_at(fighter: &mut L2CFighterCommon, y: f32, scale: f32) {
 
 unsafe fn opening_glow(fighter: &mut L2CFighterCommon) {
     // Immediate bright start with a short fade back to normal.
-    macros::FLASH(fighter, 5.0, 5.0, 6.0, 1.0);
+    macros::FLASH(fighter, 12.0, 12.0, 16.0, 1.0);
     macros::FLASH_FRM(fighter, OPEN_GLOW_FRAMES, 1.0, 1.0, 1.0, 0.0);
-    aura_at(fighter, 3.5, 1.25);
-    aura_at(fighter, 7.5, 1.45);
-    aura_at(fighter, 11.0, 1.25);
+    aura_at(fighter, 3.5, 2.2);
+    aura_at(fighter, 7.5, 2.6);
+    aura_at(fighter, 11.0, 2.2);
 }
 
 unsafe fn ending_glow(fighter: &mut L2CFighterCommon) {
