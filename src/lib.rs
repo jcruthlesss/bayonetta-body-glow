@@ -1,7 +1,6 @@
 #![feature(proc_macro_hygiene)]
 
 use smash::app::lua_bind::*;
-use smash::hash40;
 use smash::lib::lua_const::*;
 use smash::lua2cpp::L2CFighterCommon;
 use smash::phx::Hash40;
@@ -9,27 +8,20 @@ use smash_script::macros;
 use smashline::{Agent, Main};
 
 const TARGET_COLOR_SLOT: i32 = 2;
-// Runtime state survives motion cancels. This is the first calibration value;
-// it can be adjusted after an in-game timing test.
-const TRANSFORM_FRAMES: i32 = 90;
+// body_anim is the first mesh entry in c02's model.numdlb.
+const BODY_ANIM_MESH_INDEX: u32 = 0;
 const END_GLOW_FRAMES: i32 = 12;
 
-static mut TRANSFORM_TIMER: [i32; 8] = [0; 8];
-static mut WAS_TRIGGER_MOTION: [bool; 8] = [false; 8];
-static mut END_GLOW_STARTED: [bool; 8] = [false; 8];
+static mut WAS_BODY_ANIM_VISIBLE: [bool; 8] = [false; 8];
+static mut END_GLOW_TIMER: [i32; 8] = [0; 8];
 
 unsafe fn entry_id(boma: *mut smash::app::BattleObjectModuleAccessor) -> Option<usize> {
     let id = WorkModule::get_int(boma, *FIGHTER_INSTANCE_WORK_ID_INT_ENTRY_ID);
     if (0..8).contains(&id) { Some(id as usize) } else { None }
 }
 
-unsafe fn is_transform_motion(boma: *mut smash::app::BattleObjectModuleAccessor) -> bool {
-    let motion = MotionModule::motion_kind(boma);
-    motion == hash40("attack_s4_s")
-        || motion == hash40("attack_s4_hi")
-        || motion == hash40("attack_s4_lw")
-        || motion == hash40("attack_hi4")
-        || motion == hash40("attack_lw4")
+unsafe fn body_anim_is_visible(boma: *mut smash::app::BattleObjectModuleAccessor) -> bool {
+    VisibilityModule::is_visible_mesh(boma, BODY_ANIM_MESH_INDEX)
 }
 
 unsafe fn kill_glow(fighter: &mut L2CFighterCommon) {
@@ -56,7 +48,6 @@ unsafe fn aura_at(fighter: &mut L2CFighterCommon, y: f32, scale: f32) {
 }
 
 unsafe fn ending_glow(fighter: &mut L2CFighterCommon) {
-    // Three overlapping body lights create the body-covering bloom requested.
     macros::FLASH(fighter, 16.0, 16.0, 20.0, 1.0);
     aura_at(fighter, 3.0, 2.7);
     aura_at(fighter, 7.5, 3.1);
@@ -64,9 +55,8 @@ unsafe fn ending_glow(fighter: &mut L2CFighterCommon) {
 }
 
 unsafe fn reset(fighter: &mut L2CFighterCommon, id: usize) {
-    TRANSFORM_TIMER[id] = 0;
-    WAS_TRIGGER_MOTION[id] = false;
-    END_GLOW_STARTED[id] = false;
+    WAS_BODY_ANIM_VISIBLE[id] = false;
+    END_GLOW_TIMER[id] = 0;
     kill_glow(fighter);
 }
 
@@ -76,7 +66,7 @@ unsafe extern "C" fn bayonetta_body_glow_frame(fighter: &mut L2CFighterCommon) {
         let Some(id) = entry_id(boma) else { return; };
 
         if WorkModule::get_int(boma, *FIGHTER_INSTANCE_WORK_ID_INT_COLOR) != TARGET_COLOR_SLOT {
-            if TRANSFORM_TIMER[id] > 0 {
+            if WAS_BODY_ANIM_VISIBLE[id] || END_GLOW_TIMER[id] > 0 {
                 reset(fighter, id);
             }
             return;
@@ -91,24 +81,21 @@ unsafe extern "C" fn bayonetta_body_glow_frame(fighter: &mut L2CFighterCommon) {
             return;
         }
 
-        let trigger = is_transform_motion(boma);
-        if trigger && !WAS_TRIGGER_MOTION[id] {
+        let visible_now = body_anim_is_visible(boma);
+
+        // Actual model-state edge: body_anim visible -> body_anim hidden.
+        // Gun hold length, motion changes, and cancels cannot affect detection.
+        if !visible_now && WAS_BODY_ANIM_VISIBLE[id] {
             kill_glow(fighter);
-            TRANSFORM_TIMER[id] = TRANSFORM_FRAMES;
-            END_GLOW_STARTED[id] = false;
+            ending_glow(fighter);
+            END_GLOW_TIMER[id] = END_GLOW_FRAMES;
         }
-        WAS_TRIGGER_MOTION[id] = trigger;
+        WAS_BODY_ANIM_VISIBLE[id] = visible_now;
 
-        if TRANSFORM_TIMER[id] > 0 {
-            if TRANSFORM_TIMER[id] == END_GLOW_FRAMES && !END_GLOW_STARTED[id] {
-                END_GLOW_STARTED[id] = true;
-                ending_glow(fighter);
-            }
-
-            TRANSFORM_TIMER[id] -= 1;
-            if TRANSFORM_TIMER[id] == 0 {
+        if END_GLOW_TIMER[id] > 0 {
+            END_GLOW_TIMER[id] -= 1;
+            if END_GLOW_TIMER[id] == 0 {
                 kill_glow(fighter);
-                END_GLOW_STARTED[id] = false;
             }
         }
     }
