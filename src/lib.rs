@@ -194,7 +194,9 @@ unsafe extern "C" fn bayonetta_body_glow_frame(fighter: &mut L2CFighterCommon) {
 
 #[skyline::main(name = "bayonetta_body_glow")]
 pub fn main() {
-    skyline::install_hooks!(visibility_set_int64_hook);
+    // Diagnostic build: do not install the experimental visibility hook.
+    // A hook-resolution failure can stop plugin initialization before the
+    // Smashline fighter callback below is registered.
     Agent::new("bayonetta")
         .on_line(Main, bayonetta_body_glow_frame)
         .install();
