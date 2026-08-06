@@ -84,24 +84,10 @@ unsafe fn kill_glow(fighter: &mut L2CFighterCommon) {
     );
 }
 
-unsafe fn aura_at(fighter: &mut L2CFighterCommon, y: f32, scale: f32) {
-    macros::EFFECT_FOLLOW(
-        fighter,
-        Hash40::new("sys_aura_light"),
-        Hash40::new("top"),
-        0.0, y, 0.0,
-        0.0, 0.0, 0.0,
-        scale,
-        true,
-    );
-    macros::LAST_EFFECT_SET_COLOR(fighter, 1.0, 0.82, 1.0);
-}
-
 unsafe fn ending_glow(fighter: &mut L2CFighterCommon) {
+    // FLASH applies immediately to the model. sys_aura_light was removed
+    // because its delayed bloom created a second glow well after body_norm.
     macros::FLASH(fighter, 16.0, 16.0, 20.0, 1.0);
-    aura_at(fighter, 3.0, 2.7);
-    aura_at(fighter, 7.5, 3.1);
-    aura_at(fighter, 12.0, 2.7);
 }
 
 unsafe fn reset(fighter: &mut L2CFighterCommon, id: usize) {
