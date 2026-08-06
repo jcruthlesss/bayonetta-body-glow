@@ -3,7 +3,6 @@
 use smash::app::lua_bind::*;
 use smash::lib::lua_const::*;
 use smash::lua2cpp::L2CFighterCommon;
-use smash::phx::Hash40;
 use smash_script::macros;
 use smashline::{Agent, Main};
 
@@ -76,12 +75,6 @@ unsafe fn shooting_state_active(boma: *mut smash::app::BattleObjectModuleAccesso
 
 unsafe fn kill_glow(fighter: &mut L2CFighterCommon) {
     macros::COL_NORMAL(fighter);
-    EffectModule::kill_kind(
-        fighter.module_accessor,
-        Hash40::new("sys_aura_light"),
-        true,
-        true,
-    );
 }
 
 unsafe fn ending_glow(fighter: &mut L2CFighterCommon) {
