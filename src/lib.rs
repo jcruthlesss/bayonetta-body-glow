@@ -1,9 +1,9 @@
 #![feature(proc_macro_hygiene)]
 
 use smash::app::lua_bind::*;
-use smash::hash40;
 use smash::lib::lua_const::*;
 use smash::lua2cpp::L2CFighterCommon;
+use smash::phx::Hash40;
 use smashline::{Agent, Main};
 
 const TARGET_COLOR_SLOT: i32 = 2;
@@ -73,19 +73,20 @@ unsafe fn shooting_state_active(boma: *mut smash::app::BattleObjectModuleAccesso
     ) || step != *FIGHTER_BAYONETTA_SHOOTING_STEP_WAIT
 }
 
-unsafe fn set_body_variant(
-    boma: *mut smash::app::BattleObjectModuleAccessor,
-    variant: u64,
-) {
-    VisibilityModule::set_int64(boma, hash40("body") as i64, variant as i64);
-}
-
 unsafe fn show_glow(fighter: &mut L2CFighterCommon) {
-    set_body_variant(fighter.module_accessor, hash40("body_glow"));
+    ModelModule::set_mesh_visibility(
+        fighter.module_accessor,
+        Hash40::new("body_glow_VIS_O_OBJShape"),
+        true,
+    );
 }
 
 unsafe fn show_normal(fighter: &mut L2CFighterCommon) {
-    set_body_variant(fighter.module_accessor, hash40("body_normal"));
+    ModelModule::set_mesh_visibility(
+        fighter.module_accessor,
+        Hash40::new("body_glow_VIS_O_OBJShape"),
+        false,
+    );
 }
 
 unsafe fn reset(fighter: &mut L2CFighterCommon, id: usize) {
@@ -109,6 +110,12 @@ unsafe extern "C" fn bayonetta_body_glow_frame(fighter: &mut L2CFighterCommon) {
                 reset(fighter, id);
             }
             return;
+        }
+
+        // body_glow is an independent overlay and defaults to visible. Keep it
+        // hidden except while the timed end glow is active.
+        if END_GLOW_TIMER[id] <= 0 {
+            show_normal(fighter);
         }
 
         let status = StatusModule::status_kind(boma);
