@@ -10,16 +10,20 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    container:
-      image: jugeeya/cargo-skyline:2.1.0
 
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install nightly Rust
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install cargo-skyline
+        run: |
+          cargo install --git https://github.com/jam1garner/cargo-skyline --force
+          cargo-skyline skyline update-std
+
       - name: Build release NRO
-        run: PATH=$PATH:/root/.cargo/bin /root/.cargo/bin/cargo-skyline skyline build --release
-        env:
-          HOME: /root
+        run: cargo-skyline skyline build --release
 
       - name: Locate NRO
         run: find target/aarch64-skyline-switch/release -maxdepth 1 -name '*.nro' -print
