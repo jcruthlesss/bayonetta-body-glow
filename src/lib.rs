@@ -1,9 +1,9 @@
 #![feature(proc_macro_hygiene)]
 
 use smash::app::lua_bind::*;
+use smash::hash40;
 use smash::lib::lua_const::*;
 use smash::lua2cpp::L2CFighterCommon;
-use smash_script::macros;
 use smashline::{Agent, Main};
 
 const TARGET_COLOR_SLOT: i32 = 2;
@@ -73,14 +73,19 @@ unsafe fn shooting_state_active(boma: *mut smash::app::BattleObjectModuleAccesso
     ) || step != *FIGHTER_BAYONETTA_SHOOTING_STEP_WAIT
 }
 
-unsafe fn kill_glow(fighter: &mut L2CFighterCommon) {
-    macros::COL_NORMAL(fighter);
+unsafe fn set_body_variant(
+    boma: *mut smash::app::BattleObjectModuleAccessor,
+    variant: u64,
+) {
+    VisibilityModule::set_int64(boma, hash40("body") as i64, variant as i64);
 }
 
-unsafe fn ending_glow(fighter: &mut L2CFighterCommon) {
-    // FLASH applies immediately to the model. sys_aura_light was removed
-    // because its delayed bloom created a second glow well after body_norm.
-    macros::FLASH(fighter, 16.0, 16.0, 20.0, 1.0);
+unsafe fn show_glow(fighter: &mut L2CFighterCommon) {
+    set_body_variant(fighter.module_accessor, hash40("body_glow"));
+}
+
+unsafe fn show_normal(fighter: &mut L2CFighterCommon) {
+    set_body_variant(fighter.module_accessor, hash40("body_normal"));
 }
 
 unsafe fn reset(fighter: &mut L2CFighterCommon, id: usize) {
@@ -91,7 +96,7 @@ unsafe fn reset(fighter: &mut L2CFighterCommon, id: usize) {
     CLEANUP_TIMER[id] = 0;
     ACTIVE_SMASH_STATUS[id] = 0;
     WAS_IN_SMASH[id] = false;
-    kill_glow(fighter);
+    show_normal(fighter);
 }
 
 unsafe extern "C" fn bayonetta_body_glow_frame(fighter: &mut L2CFighterCommon) {
@@ -123,7 +128,6 @@ unsafe extern "C" fn bayonetta_body_glow_frame(fighter: &mut L2CFighterCommon) {
         // be running; using SMASH_ACTIVE here would rearm the same attack and
         // create a second delayed flash.
         if in_smash && !WAS_IN_SMASH[id] {
-            kill_glow(fighter);
             SMASH_ACTIVE[id] = true;
             SAW_SHOOTING[id] = false;
             POST_SHOOT_TIMER[id] = -1;
@@ -146,7 +150,7 @@ unsafe extern "C" fn bayonetta_body_glow_frame(fighter: &mut L2CFighterCommon) {
 
         if POST_SHOOT_TIMER[id] >= 0 {
             if POST_SHOOT_TIMER[id] == 0 {
-                ending_glow(fighter);
+                show_glow(fighter);
                 END_GLOW_TIMER[id] = glow_frames_for_status(ACTIVE_SMASH_STATUS[id]);
                 POST_SHOOT_TIMER[id] = -1;
                 SMASH_ACTIVE[id] = false;
@@ -157,9 +161,12 @@ unsafe extern "C" fn bayonetta_body_glow_frame(fighter: &mut L2CFighterCommon) {
         }
 
         if END_GLOW_TIMER[id] > 0 {
+            // The game may request body_normal during this window. Reassert
+            // body_glow so the custom shell remains visible for the full bloom.
+            show_glow(fighter);
             END_GLOW_TIMER[id] -= 1;
             if END_GLOW_TIMER[id] == 0 {
-                kill_glow(fighter);
+                show_normal(fighter);
                 CLEANUP_TIMER[id] = CLEANUP_FRAMES;
             }
         }
@@ -168,7 +175,7 @@ unsafe extern "C" fn bayonetta_body_glow_frame(fighter: &mut L2CFighterCommon) {
         // the first kill request. Repeat cleanup briefly to prevent any aura
         // from lingering on body_norm.
         if CLEANUP_TIMER[id] > 0 {
-            kill_glow(fighter);
+            show_normal(fighter);
             CLEANUP_TIMER[id] -= 1;
         }
 
